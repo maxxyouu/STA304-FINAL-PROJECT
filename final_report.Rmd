@@ -1,0 +1,263 @@
+---
+title: "Analysis of Hormone Level Imbalance of Individual Impact on Acne Inflammation/Outbreak"
+author: "Jianzhong You"
+date: "22/12/2020"
+output:
+  pdf_document:
+    extra_dependencies: ["float"]
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.pos = 'H') # make the figures hold in place
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(purrr)
+
+# Simulate data
+sample_size <- 100000
+set.seed(853)
+data <-
+  tibble(
+    unique_person_id = c(1:sample_size),
+    age = runif(n = sample_size,
+                min = 18,
+                max = 30),
+    heredity = rbernoulli(n=sample_size, 0.75),
+    workout = rbernoulli(n=sample_size, 0.5),
+    rice_consumption = rnorm(n=sample_size, mean = 26, sd = 4),
+    bread_consumption = rnorm(n=sample_size, mean = 37, sd = 4)
+  )
+
+set.seed(853)
+# people who workout regularly most likely have intake of protein shake to gain muscle mass
+data <- data %>% mutate(protein_shake_intake = if_else(workout == 1, rbernoulli(1, 0.7), rbernoulli(1, 0.2)),
+                        college_students = if_else(age <= 25, rbernoulli(1, 0.70), rbernoulli(1, 0.2))) %>%
+        dplyr::select(-workout)
+
+# assign the treatment
+data_cp <- data %>% mutate(
+  age_num = case_when(
+    age < 25 ~ 2,
+    age < 30 ~ 1,
+    TRUE ~ 0),
+  heredity_num = case_when(
+    heredity == TRUE ~ 2,
+    TRUE ~ 0),
+  rice_num = case_when(
+    rice_consumption >= 30 ~ 2,
+    rice_consumption >= 28 ~ 1,
+    rice_consumption >= 26 ~ 0,
+    TRUE ~ 0),
+  bread_num = case_when(
+    bread_consumption >= 42 ~ 2,
+    bread_consumption >= 40 ~ 1,
+    bread_consumption >= 37 ~ 0,
+    TRUE ~ 0),
+  protein_num = case_when(
+    protein_shake_intake == TRUE ~ 2,
+    TRUE ~ 0),
+  college_num = case_when(
+    college_students == TRUE ~ 2,
+    TRUE ~ 0)
+) %>% 
+  rowwise() %>%
+  mutate(sum_num = sum(age_num, heredity_num, rice_num, bread_num, protein_num, college_num),
+         softmax_prob = exp(sum_num)/exp(12),
+         high_hormone_level = sample(
+           x = c(0:1),
+           size = 1,
+           replace = TRUE,
+           prob = c(1-softmax_prob, softmax_prob)
+         )
+  ) %>% 
+  ungroup()
+
+# remove the unnecessary columns
+data_cp <- data_cp %>% dplyr::select(-age_num, -heredity_num, -rice_num, -bread_num, -protein_num, -college_num, -sum_num)
+
+# assigned the outcome
+data_cp <- # data_cp
+  data_cp %>% 
+  mutate(acne_breakout_prob = if_else(high_hormone_level == 1, 0.8, 0.2)) %>%
+  rowwise() %>% 
+  mutate(acne_breakout_bool = rbernoulli(n=1, acne_breakout_prob) # sample the acne breakout outcome
+  ) %>% 
+  ungroup() %>% 
+  dplyr::select(-acne_breakout_prob) %>%
+  mutate(acne_breakout = case_when( acne_breakout_bool == TRUE ~ 1, TRUE ~ 0),
+         heredity_c = case_when( heredity == TRUE ~ 1, TRUE ~ 0),
+         protein_shake_intake_c = case_when( protein_shake_intake == TRUE ~ 1, TRUE ~ 0),
+         college_students_c = case_when( college_students == TRUE ~ 1, TRUE ~ 0)) %>%
+  mutate_at(vars(heredity_c, protein_shake_intake_c, college_students_c, high_hormone_level), ~as.factor(.)) %>%
+  dplyr::select(-heredity, -protein_shake_intake, -college_students, -unique_person_id, -softmax_prob, -acne_breakout_bool)
+
+
+# Matching
+propensity_score <- glm(high_hormone_level ~ age + heredity_c + protein_shake_intake_c + college_students_c + rice_consumption + bread_consumption,
+                        family = binomial,
+                        data = data_cp)
+
+data_cp_2 <- 
+  broom::augment(propensity_score, 
+                 data = data_cp,
+                 type.predict = "response") %>% 
+  dplyr::select(-.resid, -.std.resid, -.hat, -.sigma, -.cooksd) %>% 
+  arrange(.fitted, high_hormone_level)
+
+# treated is the hormone level / androgen level
+data_cp_2$treated <- 
+  if_else(data_cp_2$high_hormone_level == 0, 0, 1)
+data_cp_2 <- data_cp_2 %>% dplyr::select(-high_hormone_level)
+# 923 observations that are treated
+data_cp_2$treated <- as.integer(data_cp_2$treated)
+
+matches <- arm::matching(z = data_cp_2$treated, 
+                         score = data_cp_2$.fitted)
+data_cp_2 <- cbind(data_cp_2, matches)
+
+data_cp_matched <- 
+  data_cp_2 %>% 
+  filter(match.ind != 0) %>% 
+  dplyr::select(-match.ind, -pairs, -cnts)#, -treated
+
+histbackback <- function(treated, controlled) {
+  treated_ps <- ggplot(treated, aes(x)) +
+    geom_histogram(aes(x = treated, y = -..density..), binwidth = diff(range(treated$treated))/10, fill="blue") +
+    coord_flip() +
+    theme(axis.text.x = element_blank(), axis.text.y = element_blank()) +
+    xlab("Propensity Score") +
+    ylab("Density") +
+    labs(title = "Treatment - Hormone Imbalanced")
+  controlled_ps <- ggplot(controlled, aes(x)) +
+    geom_histogram(aes(x = controlled, y = ..density..), binwidth = diff(range(controlled$controlled))/10, fill="green") +
+    scale_x_continuous(position = "top") +  
+    xlab("Propensity Score") +
+    coord_flip() +
+    theme(axis.text.x = element_blank(), axis.text.y = element_blank()) + 
+    ylab("Density") +
+    labs(title = "Controlled - Hormone Balanced")
+  cowplot::plot_grid(treated_ps, controlled_ps)
+}
+```
+
+## Abstract
+|        Experimental study is the most rigorous method to deriving the casual relationship between the intervention and the outcome as it uses random assignment to get rid of any alternative explanation. However, most studies today are quasi-experiment, which does not involve random assignment and has high probability of contain hidden bias. Furthermore, some studies could not be done simply due to logistic reasons and ethical issue. In this case, we need to make use of some statistical techniques to derive casual relationship from a quasi-experiment. In this paper, I use the propensity score method with nearest neighbour matching technique to draw the casual relationship between the hormone level imbalance variable and the acne breakout response variable from simulated data and ultimately derive the implication of the study. During the analysis, I also explain how the propensity score, also known as the balancing score is used to imitate the experimental study so that researchers are more confident about the result as well as the limitation of this method. Repository of this paper can be found in https://github.com/maxxyouu/STA304-FINAL-PROJECT.git
+**Keywords**: Propensity Score Matching, Observational Study, Acne Breakout, causal inference, Logistic Regression.
+
+## Introduction
+|        Experimental study with random assignment is known as one of the most convincing way to derive the casual relationship between variables of interest. However, in reality, ethical or logistical issues often prevent a rigorous experiment from successfully implemented. In contrast, observational studies from survey are abundant in society and much easier to implement, but at a cost of being bias due to the nature of non-random assignment. To make casual effect conclusion, there are a few requirements that need to be met. First, statistical relationship must exists, often by looking at the correlation. Second, no alternative explanation that able to explain the same effect across the treatment and control group. Third, “there is a reasonable counterfactual”[3]. In observational study, the first requirement is easier to met as we can find the correlation relation use statistical approaches. The second requirement is what divides the properties of experimental study and quasi-experiment. In experimental study, researcher often employ random assignment to evenly distribute the treatment and controlled groups, which could lead to the fact that the average covariates between the two groups are the same. If there are any significant difference between the treatment group and controlled group, researchers are confident that the effect is due to the treatment and no alternative explanation. For counterfactual effect, it is essentially a thought experiment that gives “knowledge of what would have happened to those same people if they simultaneously had not received treatment”[4]. Although derive a cause-and-effect relation between variables in observation study is difficult, by employing some sophisticated statistical techniques, research could at least approximate or imitate the nature of random assignment property.
+|        There are numerous statistical methods that are capable to derive the casual effect conclusion from observational data, such as Regression Discontinuity Design (RDD), Difference in Differences (DID), Propensity Score Matching, and etc. In particular, propensity score matching begins to gain popularities as more casual inferences are done using observational data in in varies field of studies[5]. By using propensity score matching method, applied researchers able to use the balancing score from the logistic regression (more on this in later section) to make two groups that are of similar distribution of observed covariates [6], which is the key property of make casual inference conclusion. The intuition behind this balancing score number is that researchers do not need to make one-to-one matching (each in different treatment group) based on the long list of observed covariates because as more covariates are observed, the amount of data needed grows exponentially in asymptotic sense. However, when using a single score as a matching metric to divide data into two groups, it is much more flexible and easier to find each pair match base on different matching techniques[3]. In this paper, I will use propensity score matching method as a way to create two groups that are approximately balanced in observed covariates and subsequently draw causal link between the androgen level of individual with acne breakout/inflammation.
+|        Acne problem is the most common skin problem for teenagers or even individuals in early millennial age. Study has shown that more than 85%[1] teenagers suffer from acne breakout to some degree. Although acne outbreak is not fetal and it most likely heals by themselves as time go by, in some cases, psychologically, study has shown that severe acne outbreak on the face will cause destruction on the self-confidence of individual, quoted from a dermatologist, people “with acne can often feel unsupported, socially isolated and become withdrawn”[2]. To successfully combat the acne breakout, individual could change their daily diet to help alleviate this skin disorder early to prevent it from getting worse, or even as a supplemental  support along with the prescription drug from the doctor to make the heal even more effective and faster (the duration to fully recover acne problem is long). Thus, in this paper, I will first give a description of the simulated data set by examining the predictor variables including age, heredity, protein shake intake, rice consumption level, and bread consumption level, that have impact on the hormone level imbalance. Subsequently, we will derive the causal link between the androgen level of individual and the acne inflammation/outbreak using the propensity score with nearest neighbor matching technique. At the end, I will also lay out the limitation further steps desired to make the analysis even more rigorous.
+## Methodology
+### Data
+|        In the simulated data, 100,000 data points are sampled. I only consider seven predictor variables, including the variable of interest--hormone imbalance level of  each individual, where the hormone level imbalance serves as the observed intervention. One of the predictor is age, since beyond 30 years, individual is very unlikely to have acne[7] and to prevent further imbalance of the data, the simulated data only consists of individuals that are between 18 and 30 years of age, where each individual is drew from the a uniform distribution.  The second covariate I consider is the hereditary (0 or 1) of individual. Study shows that it plays a role on the probability of having acne outbreak during the teenager age due to the genetic component inherited from their parent; that is, the risk of having acne is much higher if parent also had it during their lifetime. Clinical study estimates that there are 50%-90% of acne outbreak cases are attributed to genetic factor[9], I decide to draw the sample from a Bernoulli distribution with the probability of having the inherited genetic as 75% to avoid bias toward either end of the estimated range. The third covariate I consider is the protein shake consumption (0 or 1) of individual. This covariate is simulated by using their workout habit as a proxy variable to determine if a person take protein shake. It is drew from a Bernoulli distribution with probability of taking protein shake as 70% if a person do workout, otherwise 20%. There are numerous studies show that protein shake could “trigger the production of androgens, or hormones that work by overstimulating oil glands.”[10], which is the primary cause of acne outbreak. The fourth covariate is the amount of rice consumption annually by an individual. Study shows that the consumption amount of an average person is 26 pounds of rice[11]. Therefore, I simulate this covariate by drawing samples from a normal distribution with the mean as 26 and standard derivation of 4. I allow the spread of the distribution wider as I believe not everyone eats rice as stable food in daily life. The fifth covariate is the annual amount of bread consumption. I draw the sample from a normal distribution with a mean of 37 with standard derivation as 4 [12]. The amount of rice and bread consumption has a huge impact on the acne inflammation. From study, rice and bread are food that have high glycemic index value, which leads to much higher chance of having acne breakout due to change in hormone[13]. The sixth covariate is the categorical variable, college student (assign as 1 if true, 0 otherwise). The value is drew from a Bernouli distribution with the probability of college student 70% if his/her age is less than 25 years old, otherwise, the probability drops to 20%. Finally, the "intervention" variable is the hormone level imbalance of individual, which is determined by the previous mentioned six predictors. since hormone consist of multiple substances and each of them has its unique scale of measurement. For the convenience of the paper, I assign hormone imbalance as 1, 0 otherwise. There is only one dependent variable in the data, which is the acne breakout categorical variable. This variable would be simulated from a Bernouli distribution with the parameter depends on the previous mentioned seven predictors.
+
+### Model
+|        Before we perform the analysis to derive the casual relationship between the hormone imbalance level and acne breakout, we need to perform a logistic regression on the hormone imbalance level to get the balancing score each data point, as follows: 
+$$\log(\frac{p_h}{1-p_h}) = \beta_0 + \beta_ax_a + \beta_hx_h + \beta_px_p + \beta_cx_c + \beta_rx_r + \beta_bx_b$$
+where $p_h$ is the probability of hormone imbalance given the covariates, but we treat it as the propensity score, also known as the balancing score. $x_a$ is the age, $x_h$ is heredity, $x_p$ is the protein shake intake habit, $x_c$ is the college student categorical variable, $x_r$ is the amount of rice consumption per year, and $x_b$ is the amount of bread consumption per year.
+
+|        Let $\mathbf{X}\mathbf{B} = \beta_0 + \beta_ax_a + \beta_hx_h + \beta_px_p + \beta_cx_c + \beta_rx_r + \beta_bx_b$, to find the propensity score of each individual, we need to rearrange above equation into the following:
+$$p_h = \frac{e^{\mathbf{X}\mathbf{B}}}{1+e^{\mathbf{X}\mathbf{B}}}$$
+
+In the matching stage, each pair of data are matched based on the expression above.
+
+|        After the perform the matching, we use the matched data set to perform the following modeling to find the casual link between the hormone imbalance level variable to the acne breakout variable.
+$$\log(\frac{p_a}{1-p_a}) = \beta_0 + \beta_ax_a + \beta_hx_h + \beta_px_p + \beta_cx_c + \beta_rx_r + \beta_bx_b + \beta_ix_i$$ The predictors are the same as above, but the additional $x_i$ represents the hormone imbalance level variable and $p_a$ this time represents the probability of acne breakout given the observed covariates. The main variable of interest in this study is $x_i$ and we conclude the casual link relationship between $x_i$ and $p_a$ by observing $\beta_i$ and its corresponding p value.
+
+## Results
+```{r echo=FALSE, message=FALSE}
+unmatched_balance_score <- RItools::xBalance(treated ~ age+heredity_c+protein_shake_intake_c+college_students_c+rice_consumption+bread_consumption, data=data_cp_2, report = c("chisquare.test"))$overall
+data.table::setDT(unmatched_balance_score)
+colnames(unmatched_balance_score) <- c('chi-square', 'df', 'p-value')
+knitr::kable(unmatched_balance_score, caption = "Unmatched Balance Score")
+```
+
+|        Before doing the propensity score matching, I perform a chi-square test to determines the degree of imbalance of the covariates and we have above results. The null hypothesis represents all covariates i the data set are balanced, in other words, it implies that we do not need to strip away too much data when perform the propensity score matching. In contrasts, the alternative hypothesis is that there exists at least one covariate in the data set that is imbalance between the data in treatment group and controlled group. From Table 1, we see that the p value of 0 indicates the null hypothesis is rejected and implies there are imbalance between the covariates.
+
+```{r echo=FALSE, message=FALSE, fig.align="center", fig.cap="Distribution of Propensity Scores Before Matching"}
+unmatched_df <- split(data_cp_2$.fitted, data_cp_2$treated)
+unmatched_treated <- data.frame(unlist(unmatched_df[2]))
+colnames(unmatched_treated) <- c('treated')
+unmatched_controlled <- data.frame(unlist(unmatched_df[1]))
+colnames(unmatched_controlled) <- c('controlled')
+histbackback(unmatched_treated, unmatched_controlled) # not balanced
+```
+
+|        Another visualization is used to help illustrate the imbalance covariates situation. the back-to-back histogram in figure 1 shows that the distribution of propensity scores for the treatment (indicates hormone imbalance) and controlled group (indicates no hormone imbalance) are entirely different, implies that requires matching to balance out the covariates between the two groups in order to confidently interpret the causation result.
+
+```{r echo=FALSE, message=FALSE}
+matched_balance_score <- RItools::xBalance(treated ~ age+heredity_c+protein_shake_intake_c+college_students_c+rice_consumption+bread_consumption, data=data_cp_matched, report = c("chisquare.test"))$overall
+data.table::setDT(matched_balance_score)
+colnames(matched_balance_score) <- c('chi-square', 'df', 'p-value')
+knitr::kable(matched_balance_score, caption = "Matched Balance Score")
+```
+
+|        Table 2 shows the degree of imbalance in the data set after matching. we see that the chi-square statistics is much smaller and the p value of 21.8% implies that the null hypothesis is accepted. In other words, after matching, the covariates in the data set are imbalanced.
+```{r echo=FALSE, message=FALSE, fig.align="center", fig.cap="Distribution of Propensity Scores After Matching"}
+matched_df <- split(data_cp_matched$.fitted, data_cp_matched$treated)
+matched_treated <- data.frame(unlist(matched_df[2]))
+colnames(matched_treated) <- c('treated')
+matched_controlled <- data.frame(unlist(matched_df[1]))
+colnames(matched_controlled) <- c('controlled')
+histbackback(matched_treated, matched_controlled) # not perfect, but roughly balanced
+```
+
+|        After matching, we see that the distribution of propensity scores between the two groups in Figure 2 are roughly similar. Therefore, we are more confident, at this stage, that any difference in outcome between the two groups can be attributed to the "intervention" on the treatment group, the hormone level imbalance.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+propensity_score_regression <- 
+  glm(acne_breakout ~ age + heredity_c + protein_shake_intake_c + college_students_c + rice_consumption + bread_consumption + treated, 
+      family = binomial,
+      data = data_cp_matched)
+casual_table <- huxtable::huxreg(propensity_score_regression)
+treatment_index <- which(casual_table$names == "treated")
+logit_effect <- casual_table$model1[treatment_index]
+statistics <- bind_cols(c('Hormone Imbalance'), c(logit_effect))
+colnames(statistics) <- c('Predictor of Interest', 'Logit Effect')
+knitr::kable(statistics, caption = "Causal Inference Statistics Table")
+```
+
+|        Table 3 above shows only the predictors of interest in this study. In technical term, logit number represents the effect of hormone level imbalance on the odds of getting acne breakout. In other words, it is the same as saying $\log{\frac{p_a}{1-p_a}} = 2.89268322627829$, where $p_a$ is the probability of having acne breakout. With some rearrangment, we can conclude that $p_a \approx 94%$. That is, if a person has hormone level imbalance, the probability of having acne breakout is roughly 94%. The "***" indicates there are strong evidences in the matched data that the effect is statistically significant -- with p value less than 5%.
+
+## Discussion
+### Summary
+|        We have done a simulated data set, where each row represents a set of features of an individual as well as the “treatment”, the hormone level imbalance categorical variable. From there, I used a logistic regression to find the propensity score per individual, which represents the probability of assign the person to the treatment group (hormone imbalance) given the observed features/covariates. At the subsequent stage, I perform the matching by the nearest neighbours approach, which is a pair-wise matching technique that for each propensity score, find two individuals in two different groups that has the difference less than some small threshold. After the matching stage, I have tried the best to make the average distribution of the observed covariates in the treatment group and controlled group approximately the same except the people in the treatment group have imbalanced hormone level but not that in control group. Thus, I am more confident that any effect between the two groups could attributes to the only intervention between the two groups, hormone imbalance. However, the final data set for casual inference analysis is much smaller to work with than the original one. I perform an another logistic regression on the acne breakout variable with the rest of the predictors including the categorical hormone imbalance variable (the variable of interest). At the end, the statistical significant estimation on the hormone imbalance variable indicates that there is indeed a causal link between the acne breakout and hormone imbalance. That is, if a person has hormone imbalance, it would cause the individual having higher chance of getting acne breakout.
+### Conclusion
+|        The propensity score analysis with nearest neighbours matching indicates that the hormone level imbalance of an individual is one of the casual factor that leads to higher risk of having acne breakout. In particular, the result section shows that the odds of having acne breakout is 2.83 higher if a person has hormone imbalance, in other words, there is approximately 94% of chance having acne breakout if hormone level imbalance happens. Furthermore, the statistically significant p value indicates that the result from this analysis rejects the null hypothesis — the hormone imbalance has no effect on the acne breakout, in other words, there are strong evidence from the data that the hormone imbalance does have effect on acne breakout.
+|        In conclusion, from the analysis of the paper, we already know that hormone imbalance does have causal effect on the acne breakout. From study, diet is one of the associated factor that has impact on the hormone level, either restore it back to balanced level or make it imbalance[14]. The implication is that to avoid having acne breakout or inflammation, we could make use of a proper diet to prevent acne breakout or at least alleviate the severity and prevent it from getting worse. From the introductory section, I have demonstrated varies studies on the effect of different food type impact on the hormone level, including protein shake, high glycemic index food such as white rice and bread.  Therefore, if readers of this paper suffer from acne breakout or inflammation, beside consult to the dermatologists, we could be on guard about the daily diet intake to complement the existing treatment such as avoid the food mentioned in this paper that mess up the hormone level, and ultimately make the healing period faster.
+### Weakness
+|        Although when simulate the data set, I tried to use relevant finding from literatures to make educated guess on each distribution parameter. However, when I could not find any relevant information, such as the proportion of people who drink protein shake when they workout, I only able to make the parameter predictions based on my personal experience and surrounding. Therefore, some hidden bias of the simulated data are inevitable.
+|        There are limitations about the propensity score method. Firstly, when we are deriving the casual inference, we assume that the distribution of observed covariates between the two groups are similar. However, the unobserved covariates of each individual also plays a factor in real setting. That is, there is a possibility that the confounding variable is one of the unobserved covariates and thus our analysis only able to conclude the association instead of causation of the intervention. Secondly, the propensity score matching method requires huge amount of data so that the overlap region of propensity scores is large enough to perform a better analysis. Relevant studies show that collect 3-4 times more sample data for the control group than the treatment group is recommended to ensure large enough overlap of propensity scores[3] based on the intuition that the probability of matching each propensity score in the treatment group to the controlled group is higher.
+### Next Step
+|        A sensible next step would be perform a sensitivity analysis of the result. In other words, when we perform the matching using the propensity score, we have to remove the unmatched data and thus the final result is subject to hidden bias that are not identified by us. Therefore, some sensitivity analysis could be used to measure how robust the result is. For example, the output from Wilcoxon Signed Rank Test by Rosenbaum represents “how much the odds need to be change before the statistical significance of the outcome shifts”[3].
+
+## References
+1: Gardner, S. (2020, November 12). Teen Acne: Causes, Symptoms, Treatments, & More. Retrieved December 09, 2020, from https://www.webmd.com/skin-problems-and-treatments/acne/what-is-acne
+
+2: Cashin-Garbutt, I. (2018, August 23). How does acne affect self-confidence? Retrieved December 09, 2020, from https://www.news-medical.net/news/20170508/How-does-acne-affect-self-confidence.aspx
+
+3: Olmos, A., & Govindasamy, P. (2015). Propensity Scores: A Practical Introduction Using R. Retrieved December 17, 2020, from https://journals.sfu.ca/jmde/index.php/jmde_1/article/view/431/414
+
+4: Shadish, W. R., Cook, T. D., & Campbell, D. T. (2002). Experimental and quasi-experimental design for generalized causal inference. Boston: Houghton Mifflin Company.
+
+5: Caliendo, Marco, and Sabine Kopeinig. “SOME PRACTICAL GUIDANCE FOR THE IMPLEMENTATION OF PROPENSITY SCORE MATCHING.” Wiley Online Library, John Wiley & Sons, Ltd, 31 Jan. 2008, onlinelibrary.wiley.com/doi/pdf/10.1111/j.1467-6419.2007.00527.x?casa_token=vJSIHkwqM6oAAAAA%3AoZSbRu85SzqhQk7IE1tFhLoTLiMYMMhPqSYYLaKXkNyJzp3SAM95Emp7DuSgYMBrKLsu-P1Su8N6vQ. 
+
+6: Austin, Peter C. “An Introduction to Propensity Score Methods for Reducing the Effects of Confounding in Observational Studies.” Multivariate Behavioral Research, Taylor & Francis, May 2011, www.ncbi.nlm.nih.gov/pmc/articles/PMC3144483/. 
+
+7: Jaliman, D. (2019, May 17). Acne Causes: What Is Acne and Why Do I Have It? Retrieved December 18, 2020, from https://www.webmd.com/skin-problems-and-treatments/acne/understanding-acne-basics
+
+8: Whelan, C. (2020, May 18). Is Acne Genetic? Learn About Hereditary Risks Factors. Retrieved December 18, 2020, from https://www.healthline.com/health/is-acne-genetic
+
+9: Thomas, D. (2018, November 16). Genetics of Acne. Retrieved December 18, 2020, from https://www.news-medical.net/health/Genetics-of-Acne.aspx
+
+10: Shiffer, E. (2019, February 25). Your Protein Shake Might Be Giving You Acne. Retrieved December 18, 2020, from https://www.menshealth.com/health/a19546380/protein-shakes-and-acne/
+
+11: Major U.S. Crops: Rice. (n.d.). Retrieved December 18, 2020, from http://www.crosscurrents.hawaii.edu/content.aspx?lang=eng
+
+12: Three bread trends shaping American diets. (n.d.). Retrieved December 19, 2020, from https://www.world-grain.com/articles/8702-three-bread-trends-shaping-american-diets
+
+13: University of Wisconsin Hospitals and Clinics Authority. (n.d.). Acne and Your Diet: How the Glycemic Index Affects Your Skin. Retrieved December 19, 2020, from https://www.uwhealth.org/news/acne-diet-glycemic-index/46499
+
+14: Boyers, L. (2019, April 01). How Your Diet Affects Your Hormones. Retrieved December 21, 2020, from https://www.healthline.com/health/menopause/diet-hormones
+
