@@ -140,9 +140,9 @@ histbackback <- function(treated, controlled) {
   cowplot::plot_grid(treated_ps, controlled_ps)
 }
 ```
-
+Repository of the markdown and simulation code file of this paper can be found in https://github.com/maxxyouu/STA304-FINAL-PROJECT.git
 ## Abstract
-|        Experimental study is the most rigorous method to deriving the casual relationship between the intervention and the outcome as it uses random assignment to get rid of any alternative explanation. However, most studies today are quasi-experiment, which does not involve random assignment and has high probability of contain hidden bias. Furthermore, some studies could not be done simply due to logistic reasons and ethical issue. In this case, we need to make use of some statistical techniques to derive casual relationship from a quasi-experiment. In this paper, I use the propensity score method with nearest neighbor matching technique to draw the casual relationship between the hormone level imbalance variable and the acne breakout response variable from simulated data and ultimately conclude the causal relationship between hormone level imbalance and acne breakout. Repository of the markdown and simulation code file of this paper can be found in https://github.com/maxxyouu/STA304-FINAL-PROJECT.git
+|        Experimental study is the most rigorous method to deriving the casual relationship between the intervention and the outcome as it uses random assignment to get rid of any alternative explanation. However, most studies today are quasi-experiment, which does not involve random assignment and has high probability of contain hidden bias. Furthermore, some studies could not be done simply due to logistic reasons and ethical issue. In this case, we need to make use of some statistical techniques to derive casual relationship from a quasi-experiment. In this paper, I use the propensity score method with nearest neighbor matching technique to draw the casual relationship between the hormone level imbalance variable and the acne breakout response variable from simulated data and ultimately conclude the causal relationship between hormone level imbalance and acne breakout.
 **Keywords**: Propensity Score Matching, Observational Study, Acne Breakout, causal inference, Logistic Regression.
 
 ## Introduction
