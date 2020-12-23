@@ -12,7 +12,6 @@ output:
 knitr::opts_chunk$set(fig.pos = 'H') # make the figures hold in place
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
-#library(purrr)
 
 # Simulate data
 sample_size <- 100000
@@ -242,6 +241,7 @@ knitr::kable(statistics, caption = "Causal Inference Statistics Table")
 |        Table 3 above shows only the predictors of interest as well as the reference level of all predictors (the intercept) in this study. In technical term, logit number represents the effect of hormone level imbalance on the odds of getting acne breakout. In other words, it is the same as saying $\log{\frac{p_a}{1-p_a}} = 2.89268322627829$, where $p_a$ is the probability of having acne breakout. With some rearrangement, we can conclude that $p_a \approx 94%$. That is, if a person has hormone level imbalance, the probability of having acne breakout is roughly 94%. The "***" indicates there are strong evidences in the matched data that the effect is statistically significant -- with p value less than 5%. In contrast, for the reference level (the intercept), where the person has a balanced hormone, not drink protein shake, not consume excess amount of rice and bread, does not have acne genetic from parents, and not a stressed college student, the probability of having acne breakout immediately drops to roughly 10%, by evaluate $\frac{exp(-2.184)}{1+exp(-2.184)}$.
 
 ## Discussion
+|        The casual inference analysis is done based on the data (Figure 1) after propensity score matching. The number of observations is significantly reduced, specifically, 60% of reduction. However, we gain the advantage of having two balanced groups in terms of observed covariates and thus imitate the nature of random assignment in experimental study by removing the initial selection bias[3]. It is this characteristics that give researchers the higher confidence to conclude the causation between two variables of interest, in this case, the hormone level imbalance and acne breakout.
 ### Summary
 |        We have done a simulated data set (Figure 1), where each row represents a set of features of an individual as well as the “treatment”, the hormone level imbalance categorical variable. From there, I used a logistic regression to find the propensity score for each individual, which represents the probability of assign the person to the treatment group (hormone imbalance) given the observed features/covariates. At the subsequent stage, I perform the matching by the nearest neighbors approach, which is a pair-wise matching technique that for each propensity score, find two individuals in two different groups that has the difference less than some small threshold. After the matching stage, the number of observations are shrank to only around 4,000 (Figure 2) with equal split between the treatment and control groups, with the average distribution of the observed covariates in each group approximately the same, except the people in the treatment group have imbalanced hormone level. Thus, I am more confident that any effect between the two groups could attributes to the only intervention between the two groups, hormone imbalance. However, the final data for casual inference analysis is much smaller to work with than the original one. Subsequently, I perform an another logistic regression on the acne breakout variable with the rest of the predictors including the categorical hormone imbalance variable (the variable of interest). At the end, the statistical significant estimation on the hormone imbalance variable indicates that there is indeed a causal link between the acne breakout and hormone imbalance. That is, if a person has hormone imbalance, it would cause the individual having higher chance of getting acne breakout.
 ### Conclusion
@@ -282,3 +282,24 @@ knitr::kable(statistics, caption = "Causal Inference Statistics Table")
 
 14: Boyers, L. (2019, April 01). How Your Diet Affects Your Hormones. Retrieved December 21, 2020, from https://www.healthline.com/health/menopause/diet-hormones
 
+### Package Reference
+
+Wickham, H. (2019, November 21). Easily Install and Load the 'Tidyverse' [R package tidyverse version 1.3.0]. Retrieved December 23, 2020, from https://cran.r-project.org/web/packages/tidyverse/index.html
+
+Wickham, H. (2020, August 18). A Grammar of Data Manipulation [R package dplyr version 1.0.2]. Retrieved December 23, 2020, from https://cran.r-project.org/web/packages/dplyr/index.html
+
+Hayes, A. (2020, December 16). Convert Statistical Objects into Tidy Tibbles [R package broom version 0.7.3]. Retrieved December 23, 2020, from https://cran.r-project.org/web/packages/broom/index.html
+
+Gelman, A., &amp; Su, Y. (2020, July 27). Data Analysis Using Regression and Multilevel/Hierarchical Models [R package arm version 1.11-2]. Retrieved December 23, 2020, from https://cran.r-project.org/web/packages/arm/index.html
+
+Wilke, C. (2020, September 08). Streamlined Plot Theme and Plot Annotations for 'ggplot2' [R package cowplot version 1.1.0]. Retrieved December 23, 2020, from https://cran.r-project.org/web/packages/cowplot/index.html
+
+Bowers, J., Fredrickson, M., &amp; Hansen, B. (n.d.). Package RItools. Retrieved December 23, 2020, from https://cran.r-project.org/web/packages/RItools/index.html
+
+Tierney, N. (2019, February 15). Preliminary Visualisation of Data [R package visdat version 0.5.3]. Retrieved December 23, 2020, from https://cran.r-project.org/web/packages/visdat/index.html
+
+Dowle, M. (2020, December 08). Extension of 'data.frame' [R package data.table version 1.13.4]. Retrieved December 23, 2020, from https://cran.r-project.org/web/packages/data.table/index.html
+
+Hugh-Jones, D. (2020, October 27). Easily Create and Style Tables for LaTeX, HTML and Other Formats [R package huxtable version 5.1.1]. Retrieved December 23, 2020, from https://cran.r-project.org/web/packages/huxtable/index.html
+
+Xie, Y. (2020, September 22). A General-Purpose Package for Dynamic Report Generation in R [R package knitr version 1.30]. Retrieved December 23, 2020, from https://cran.r-project.org/web/packages/knitr/index.html
